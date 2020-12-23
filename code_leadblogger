@@ -1,0 +1,130 @@
+#load the packages
+library(devtools)
+library(dplyr)
+library(dbplyr)
+library(nflfastR)
+library(DBI) 
+library(RSQLite)
+library(stats)
+library(ggimage)
+library(stringr)
+library(purrr)
+library(tidyverse)
+library(furrr)
+update_db()
+connection <- dbConnect(SQLite(), "./pbp_db")
+connection
+dbListTables(connection)
+pbp_db <- tbl(connection, "nflfastR_pbp")
+
+#success at fourth down
+fourthdown <- pbp_db %>% filter(down == "4", season_type == "REG", rush == "1" | pass == "1") %>% select(fourth_down_converted, season) %>% collect()
+fourthdowntries_peryear <- fourthdown %>% group_by(season) %>% summarise(tries = n())
+fourthdownsucces_peryear <- fourthdown %>% filter(fourth_down_converted =="1") %>% group_by(season) %>% summarise(conv = n()) %>% select(-season)
+successrate <- cbind(fourthdowntries_peryear,fourthdownsucces_peryear) %>% mutate(rate = conv / tries)
+successrate 
+
+#plot the conversion rate per year
+conv <- ggplot(successrate, aes(x = season, y = rate*100)) + geom_point() + geom_smooth() + 
+  labs(x = "Saison",
+           y = "Erfolgreich ausgespielte vierte Versuche in Prozent",
+           title = "Anteil erfolgreich ausgespielter vierter Versuche je Saison bis Woche 12",
+           caption = "Daten: @nflfastR, Autor: @simon19481")
+conv
+
+#number of fourth down converted over the first 12 weeks of each season
+fourthdown_week12 <- pbp_db %>% filter(down == "4", season_type == "REG", rush == "1" | pass == "1", week < 13) %>% select(play, season) %>% group_by(season) %>% summarise(outplays =n()) %>% collect()
+fthdwn <- pbp_db %>% filter(down == "4", season_type == "REG", week < 13) %>% select(play, season) %>% group_by(season) %>% summarise(plays =n()) %>% collect() %>% mutate(year = season) %>% select(-season)
+fourthdown_week12
+
+vhtns <- cbind(fourthdown_week12, fthdwn)
+vhtns %>% mutate(ypsi = outplays/plays*100)
+
+tries_week12 <- ggplot(vhtns, aes(x=season, y = outplays/plays*100)) + geom_point() + geom_smooth() +
+  labs(x = "Saison",
+       y= "Anteil ausgespielter vierter Versuche in Prozent",
+       title = "Anteil ausgespielter vierter Versuche über die ersten 12 Wochen pro Saison je Jahr",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+tries_week12
+viertedowns <- ggplot(vhtns, aes(x=season, y = plays)) + geom_bar(stat="identity", fill="red", alpha=0.5) + geom_smooth() +
+  labs(x = "Saison",
+       y= "Anzahl vierter versuche",
+       title = "Anzahl vierter Versuche über die ersten 12 Wochen pro Saison je Jahr",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+viertedowns
+
+#rushes und passes in neutral situations in the first 12 weeks of NFL
+runs <- pbp_db %>% filter(down < 3, wp > .2 & wp < .8, rush == "1", week < 13) %>% group_by(season) %>% summarise(runs = n()) %>% collect()
+runs
+
+pass <- pbp_db %>% filter(down < 3, wp > .2 & wp < .8, pass == "1", week < 13) %>% group_by(season) %>% summarise(pass = n()) %>% collect() %>% select(-season)
+pass
+
+#ratio runs to pass
+run_pass_ratio <- cbind(runs, pass)
+run_pass_ratio
+run_pass_ratio_plot <- ggplot(run_pass_ratio, aes(x=season, y = runs/pass)) + geom_point() + geom_smooth() +
+  labs(x = "Saison",
+       y = "Verhältnis Lauf- zu Passspielzügen",
+       title = "Verhältnis Lauf- zu Passspielzügen in neutraler Spielsituation bis week 12",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+run_pass_ratio_plot
+
+#yds to go on third
+yds_to_go3 <- pbp_db %>% filter(down == "3", week < 13) %>% group_by(season) %>% summarise(to_go = mean(ydstogo, na.rm = TRUE)) %>% collect()
+yds_to_go3_plot <- ggplot(yds_to_go3, aes(x = season, y = to_go)) + lims(y = c(6,8)) + geom_point() + geom_smooth() +
+  labs(x = "Saison",
+       y= "Yards to go",
+       title = "Entwicklung der Distanz bis zum neuen ersten Versuch im dritten down über die Zeit",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+yds_to_go3_plot
+
+yds_to_go3_insgesamt <- pbp_db %>% filter(down == "3") %>% summarise(to_go = mean(ydstogo, na.rm = TRUE), sd_to_go = sd(ydstogo, na.rm = TRUE)) %>% collect()
+yds_to_go3_insgesamt
+
+#defensive epa in neutral situations
+def_succ <- pbp_db %>% filter(week < "13", wp > .2 & wp < .8, week < 13) %>% group_by(season) %>% summarise(d_epa = -mean(epa, na.rm = TRUE)) %>% collect()
+def_succ_plot <- ggplot(def_succ, aes(x = season, y = d_epa)) + geom_point() + geom_smooth() + lims(y = c(-0.06,0.06)) + 
+  labs(x = "Saison",
+       y= "defensives EPA",
+       title = "Entwicklung der defensiven EPA über die Zeit bis Week 12",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+def_succ_plot
+
+#offensive holding
+
+holding <- pbp_db %>% filter(play_type == "no_play", week < 13) %>% select(desc, season, week, play_type)%>% collect() %>% filter(str_detect(desc, "Offensive Holding")) %>% group_by(season) %>% summarise(holdings = n()) 
+holding_plot <- ggplot(holding, aes(x = season, y = holdings)) + geom_bar(stat="identity", fill="red", alpha=0.5) + geom_smooth() +
+  labs(x = "Saison",
+       y = "Anzahl der Strafen für offensive holding",
+       title = "Verlauf der Strafen für offensive holding über die Zeit in der ersten Saisonhälfte",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+holding_plot
+
+#ratio of short third downs
+thirddowns <- pbp_db %>% filter(down == "3", season_type == "REG", week < 13) %>% select(play, season, ydstogo) %>% group_by(season, ydstogo) %>% summarise(plays =n()) %>% collect()
+thirddowns
+
+short_third <- thirddowns %>% filter(ydstogo <= 2) %>%  mutate(shortydsits= sum(plays, na.rm = T)) %>% group_by(season) %>% summarise(n_short = mean(shortydsits, na.rm = T))
+short_third
+gesamt_third <- thirddowns %>% group_by(season) %>% summarise(dritte = sum(plays, na.rm = T)) %>% select(-season)
+gesamt_third
+
+anteil_kurz <- cbind(short_third, gesamt_third) %>% mutate(ratio = n_short/dritte)
+anteil_kurz
+
+thirdandshort_plot <- ggplot(anteil_kurz, aes(x = season, y = ratio*100)) + geom_point() + geom_smooth() +
+  labs(x="Saison",
+       y = "Anteil kurzer 3rd downs in Prozent",
+       title = "Anteil kurzer dritter Versuche an allen dritten Versuchen über die Zeit",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+thirdandshort_plot
+
+#points in the first 12 weeks of an NFL season
+ppg_season <- pbp_db %>% filter(week < 13, game_seconds_remaining =="0")  %>% group_by(season) %>% summarise(points = mean(total, na.rm = TRUE))%>% collect()
+pointsperseason <- ggplot(ppg_season, aes(x = season, y = points)) + geom_bar(stat="identity", fill="red", alpha=0.5) + geom_smooth() +
+  labs(x = "Saison",
+       y = "Punkte pro Spiel",
+       title = "Punkte pro Spiel über die Zeit bis Week 12",
+       caption = "Daten: @nflfastR, Autor: @simon19481")
+pointsperseason
